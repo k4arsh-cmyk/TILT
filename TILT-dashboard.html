@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TILT Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0f1115;color:#e8eaed;padding:22px}
+h1{font-size:21px;margin:0 0 2px}.sub{color:#9aa0a6;font-size:13px;margin-bottom:16px}
+.bar{display:flex;gap:10px;align-items:center;margin-bottom:18px}
+select{background:#181b21;color:#e8eaed;border:1px solid #2c313a;border-radius:8px;padding:7px 10px;font-size:13px}
+.live{font-size:11px;color:#3ddc84}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+.card{background:#181b21;border:1px solid #262a31;border-radius:12px;padding:14px 16px}
+.card .l{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9aa0a6}.card .v{font-size:22px;font-weight:650;margin-top:4px}
+.green{color:#3ddc84}.red{color:#ff6b5e}.amber{color:#ffb020}
+.panel{background:#181b21;border:1px solid #262a31;border-radius:12px;padding:16px;margin-bottom:20px}.panel h2{font-size:14px;margin:0 0 12px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #262a31}th{color:#9aa0a6;font-size:11px;text-transform:uppercase}
+td.n,th.n{text-align:right}.chartbox{position:relative;height:240px}
+.insight{display:grid;grid-template-columns:1fr 1fr;border-radius:12px;overflow:hidden;border:1px solid #262a31;margin-bottom:12px}.insight>div{padding:18px}
+.calm{background:#10241a}.tilt{background:#2a1413}.big{font-size:26px;font-weight:700}.cap{font-size:11px;text-transform:uppercase;color:#9aa0a6}
+.punch{font-size:13px;font-weight:600;padding:10px 14px;background:#241d10;border:1px solid #4a3a14;border-radius:10px;color:#ffce80}
+.tag{font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px}
+.t_oversizing{background:#3a2c10;color:#ffce80}.t_revenge{background:#3a1513;color:#ff9b8f}.t_daily_bleed{background:#3a0d08;color:#ffd9d3}.t_overtrading{background:#1f1a3a;color:#b9aaff}
+</style></head><body>
+<h1>TILT &mdash; Risk &amp; Journal</h1>
+<div class="bar"><select id="walletSel"></select><span class="live" id="live"></span></div>
+<div class="grid" id="kpis"></div>
+<div class="panel"><h2>The TILT insight &mdash; calm vs. revenge trading</h2>
+<div class="insight"><div class="calm"><div class="cap">When calm</div><div class="big green" id="calmPnl">-</div><div class="cap" id="calmSub"></div></div>
+<div class="tilt"><div class="cap">Within 30 min of a loss</div><div class="big red" id="tiltPnl">-</div><div class="cap" id="tiltSub"></div></div></div>
+<div class="punch" id="punch"></div></div>
+<div class="panel"><h2>Daily realized PnL</h2><div class="chartbox"><canvas id="pnl"></canvas></div></div>
+<div class="panel"><h2>Performance by coin</h2><div id="coins"></div></div>
+<div class="panel"><h2>Recent risk alerts</h2><div id="alerts"></div></div>
+<script>
+var API="https://mdyeujlmiqiztzfnlogc.supabase.co/functions/v1/dashboard";
+// Key is entered once and stored in this browser only - never hardcoded in the file.
+var KEY=localStorage.getItem('tilt_key')||'';
+if(!KEY){ KEY=prompt('Enter TILT access key')||''; if(KEY) localStorage.setItem('tilt_key',KEY); }
+var wallet=null, chart=null;
+var money=function(n){n=Number(n||0);return (n<0?'-$':'$')+Math.abs(Math.round(n)).toLocaleString();};
+var kpi=function(l,v,c){return "<div class='card'><div class='l'>"+l+"</div><div class='v "+(c||'')+"'>"+v+"</div></div>";};
+
+async function load(){
+  try{
+    var u=API+"?key="+KEY+(wallet?("&wallet="+encodeURIComponent(wallet)):"");
+    var D=await (await fetch(u)).json();
+    if(!wallet && D.wallet) wallet=D.wallet;
+    // wallet dropdown
+    var sel=document.getElementById('walletSel');
+    if(!sel.options.length && D.traders){ D.traders.forEach(function(t){
+      var o=document.createElement('option'); o.value=t.wallet; o.textContent=(t.label||'trader')+' ('+t.network+')';
+      if(t.wallet===wallet)o.selected=true; sel.appendChild(o); }); }
+    var d=D.desk||{},o=D.overall||{};
+    var lp=Number(o.net_pnl||d.lifetime_pnl||0);
+    document.getElementById('kpis').innerHTML=[kpi('Equity',money(d.equity)),kpi('Lifetime PnL',money(lp),lp<0?'red':'green'),
+      kpi('Win rate',(o.win_rate==null?'-':o.win_rate+'%')),kpi('Profit factor',(o.profit_factor==null?'-':o.profit_factor),Number(o.profit_factor)<1?'red':'green'),
+      kpi('Expectancy',money(o.expectancy),Number(o.expectancy)<0?'red':'green'),kpi('Alerts',d.total_alerts||0,'amber')].join('');
+    var calm=(D.tw||[]).filter(function(x){return x.after_loss===false})[0]||{};
+    var tl=(D.tw||[]).filter(function(x){return x.after_loss===true})[0]||{};
+    document.getElementById('calmPnl').textContent=money(calm.net_pnl);document.getElementById('calmSub').textContent=(calm.trades||0)+' trades / '+(calm.win_rate||0)+'% win';
+    document.getElementById('tiltPnl').textContent=money(tl.net_pnl);document.getElementById('tiltSub').textContent=(tl.trades||0)+' trades / '+(tl.win_rate||0)+'% win';
+    if(calm.net_pnl!=null||tl.net_pnl!=null){document.getElementById('punch').textContent='Revenge trading costs '+money(Math.abs(tl.net_pnl||0))+'. Block it and you would be '+money(calm.net_pnl||0)+' instead of '+money(lp)+'.';}
+    var dd=D.daily||[];
+    if(chart)chart.destroy();
+    chart=new Chart(document.getElementById('pnl'),{type:'bar',data:{labels:dd.map(function(r){return r.day}),datasets:[{data:dd.map(function(r){return Number(r.pnl)}),backgroundColor:dd.map(function(r){return Number(r.pnl)<0?'#e0584a':'#34b277'})}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{maxRotation:60,minRotation:60,font:{size:9},color:'#9aa0a6'}},y:{ticks:{color:'#9aa0a6'}}}}});
+    var ch='<table><thead><tr><th>Coin</th><th class=n>Trades</th><th class=n>Win %</th><th class=n>Net PnL</th></tr></thead><tbody>';
+    (D.coins||[]).forEach(function(r){ch+='<tr><td>'+r.coin+'</td><td class=n>'+r.trades+'</td><td class=n>'+r.win_rate+'%</td><td class="n '+(Number(r.net_pnl)<0?'red':'green')+'">'+money(r.net_pnl)+'</td></tr>';});
+    document.getElementById('coins').innerHTML=ch+'</tbody></table>';
+    var ah='';if((D.alerts||[]).length){ah='<table><thead><tr><th>Time</th><th>Type</th><th>Coin</th><th>What happened</th></tr></thead><tbody>';
+      D.alerts.forEach(function(r){var t=new Date(r.ts).toLocaleString();ah+='<tr><td>'+t+'</td><td><span class="tag t_'+r.detector+'">'+r.detector.replace('_',' ')+'</span></td><td>'+(r.coin||'-')+'</td><td>'+r.message+'</td></tr>';});
+      ah+='</tbody></table>';}else{ah='<div class=sub>No alerts.</div>';}
+    document.getElementById('alerts').innerHTML=ah;
+    document.getElementById('live').textContent='live - updated '+new Date().toLocaleTimeString();
+  }catch(e){ document.getElementById('live').textContent='error: '+e.message; }
+}
+document.getElementById('walletSel').addEventListener('change',function(e){wallet=e.target.value;load();});
+load(); setInterval(load,5000);
+</script>
+</body></html>
